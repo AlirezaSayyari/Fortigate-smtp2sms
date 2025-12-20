@@ -128,7 +128,8 @@ Edit `docker-compose.yml` and set:
 ### 3️⃣ Run
 
 ```bash
-docker-compose up -d
+chmod +x deploy.sh
+.\deploy.sh
 ```
 
 ### 4️⃣ Check Logs
