@@ -80,8 +80,19 @@ end
 
 ---
 
-### 4️⃣ Assign a physical port in mgmt vdom to same vlan with SMTP Server (Your Docker Gateway) and connect it to core switch with access to SMTP Server vlan
+### 4️⃣ Connecting FortiGate VDOM to SMTP Docker Gateway
 
+To allow your FortiGate to send VPN two-factor authentication (2FA) codes via a custom SMTP-to-SMS gateway running in Docker, you must ensure network connectivity between the FortiGate and the SMTP server.
+
+Interface Assignment: Assign a physical interface on the FortiGate to the mgmt VDOM.
+
+VLAN Configuration: Place this interface in the same VLAN as the SMTP Docker server (the gateway VLAN).
+
+Switch Connectivity: Connect the interface to your core switch with access to the SMTP server VLAN.
+
+This setup ensures that the FortiGate can directly reach the SMTP gateway without relying on routing through other VDOMs or NAT, enabling reliable delivery of 2FA codes to end users.
+
+```bash
 config vdom
 edit Mgmt
 config system interface
@@ -94,7 +105,7 @@ edit "port1"
         set snmp-index 2
     next
 end
-
+```
 ---
 
 ### 5️⃣ (Optional) Test SMS Delivery from FortiGate
