@@ -1,0 +1,12 @@
+services:
+  smtp2sms:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: smtp2sms:payamak
+    container_name: smtp2sms
+    restart: always
+    ports:
+      - "${HOST_SMTP_PORT:-25}:25"
+    # env_file:
+    #   - .env
