@@ -106,11 +106,11 @@ def send_sms_provider2(mobile, token, config):
 
 def send_sms_provider3(mobile, token, config):
     """Send SMS via provider3."""
-    payload = json.dumps({
+    payload = json.dumps([{
         "srcNum": config.get("srcnum"),
         "recipient": mobile,
         "body": f"Your Token code is {token}"
-    })
+    }])
 
     headers = {
         "Content-Type": "application/json",
