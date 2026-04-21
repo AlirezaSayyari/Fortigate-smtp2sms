@@ -19,6 +19,13 @@ PROV1_AUTH = "Basic XXXXXXXXXXXXXXXX="  # <-- replace with your real header valu
 PROV2_URL = "https://console.provider2.com/api/send/shared/xxxxxxxxxxxxxxxxxx"
 PROV2_BODY_ID = 1111111
 
+# Tertiary SMS provider
+PROV3_URL = "https://api.provider3.com/api/v3.0.1/send"
+PROV3_AUTH = "xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+PROV3_SRCNUM = XXXXXX
+
+
+
 # Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -89,6 +96,34 @@ def send_sms_provider2(mobile, token):
         logging.error(f"[Provider2] Error: {e}")
     return False
 
+def send_sms_provider3(mobile, token):
+    """Send SMS via provider3."""
+    payload = json.dumps({
+        "srcNum": PROV3_SRCNUM,
+        "recipient": mobile,
+        "body": f"Your Token code is {token}"
+    }])
+
+    headers = {
+        "Content-Type": "application/json",
+        "x-api-key": PROV3_AUTH
+    }
+
+    try:
+        resp = requests.post(PROV3_URL, headers=headers, data=payload, timeout=10)
+        logging.info(f"[Provider3] HTTP {resp.status_code} - {resp.text.strip()}")
+
+        if resp.status_code == 200:
+            data = resp.json()
+        if isinstance(data, list) and len(data) > 0:
+            item = data[0]
+            if item.get("statusCode") == 200 and item.get("messageId", 0) > 0:
+                logging.info("[Provider3] SMS sent successfully.")
+                return True
+    except Exception as e:
+        logging.error(f"[Provider3] Error: {e}")
+    return False
+
 
 class SMTPHandler:
     async def handle_DATA(self, server, session, envelope):
@@ -109,6 +144,8 @@ class SMTPHandler:
             return '250 OK (Provider1)'
         elif send_sms_provider2(phone, code):
             return '250 OK (Provider2)'
+        elif send_sms_provider3(phone, code):
+            return '250 OK (Provider3)'
         else:
             logging.error("All SMS providers failed.")
             return '451 Temporary failure'
