@@ -16,7 +16,7 @@ load_dotenv()
 def load_config():
     """Load configuration from environment variables."""
     global ALLOWED_IP, PROVIDERS, PRIORITY_ORDER
-    ALLOWED_IP = os.getenv("ALLOWED_IP", "192.168.X.X")
+    ALLOWED_IP = os.getenv("ALLOWED_IP")
 
     PROVIDERS = {}
     for i in range(1, 4):  # Assuming up to 3 providers
