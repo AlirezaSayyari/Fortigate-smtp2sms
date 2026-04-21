@@ -5,26 +5,34 @@ from aiosmtpd.controller import Controller
 import re
 import requests
 import json
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # ==================== CONFIG ====================
 
-# Allowed source (FortiGate) IP
-ALLOWED_IP = "192.168.X.X"
+def load_config():
+    """Load configuration from environment variables."""
+    global ALLOWED_IP, PROVIDERS, PRIORITY_ORDER
+    ALLOWED_IP = os.getenv("ALLOWED_IP", "192.168.X.X")
 
-# Primary SMS provider
-PROV1_URL = "https://sms.provider1.com/api/Sms/Send"
-PROV1_AUTH = "Basic XXXXXXXXXXXXXXXX="  # <-- replace with your real header value
+    PROVIDERS = {}
+    for i in range(1, 4):  # Assuming up to 3 providers
+        name = os.getenv(f"PROVIDER{i}_NAME")
+        if name:
+            PROVIDERS[name] = {
+                "url": os.getenv(f"PROVIDER{i}_URL"),
+                "auth": os.getenv(f"PROVIDER{i}_AUTH"),
+                "body_id": os.getenv(f"PROVIDER{i}_BODY_ID"),
+                "srcnum": os.getenv(f"PROVIDER{i}_SRCNUM"),
+            }
 
-# Secondary SMS provider
-PROV2_URL = "https://console.provider2.com/api/send/shared/xxxxxxxxxxxxxxxxxx"
-PROV2_BODY_ID = 1111111
+    PRIORITY_ORDER = [p.strip() for p in os.getenv("PROVIDER_PRIORITY", "provider1,provider2,provider3").split(",")]
 
-# Tertiary SMS provider
-PROV3_URL = "https://api.provider3.com/api/v3.0.1/send"
-PROV3_AUTH = "xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-PROV3_SRCNUM = XXXXXX
-
-
+# Initial load
+load_config()
 
 # Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -49,7 +57,7 @@ def extract_phone_and_code(envelope):
     return phone, code
 
 
-def send_sms_provider1(mobile, token):
+def send_sms_provider1(mobile, token, config):
     """Send SMS via provider1."""
     payload = json.dumps({
         "MobileNo": mobile,
@@ -58,12 +66,12 @@ def send_sms_provider1(mobile, token):
 
     headers = {
         "Content-Type": "application/json",
-        "Authorization": PROV1_AUTH,
+        "Authorization": config.get("auth"),
         "cache-control": "no-cache"
     }
 
     try:
-        resp = requests.post(PROV1_URL, headers=headers, data=payload, timeout=10)
+        resp = requests.post(config["url"], headers=headers, data=payload, timeout=10)
         logging.info(f"[Provider1] HTTP {resp.status_code} - {resp.text.strip()}")
         if resp.status_code == 200 and re.match(r"^\d+$", resp.text.strip()):
             logging.info("[Provider1] SMS sent successfully.")
@@ -73,10 +81,10 @@ def send_sms_provider1(mobile, token):
     return False
 
 
-def send_sms_provider2(mobile, token):
+def send_sms_provider2(mobile, token, config):
     """Send SMS via provider2."""
     payload = json.dumps({
-        "bodyId": PROV2_BODY_ID,
+        "bodyId": config.get("body_id"),
         "to": mobile,
         "args": [token]
     })
@@ -84,7 +92,7 @@ def send_sms_provider2(mobile, token):
     headers = {"Content-Type": "application/json"}
 
     try:
-        resp = requests.post(PROV2_URL, headers=headers, data=payload, timeout=10)
+        resp = requests.post(config["url"], headers=headers, data=payload, timeout=10)
         logging.info(f"[Provider2] HTTP {resp.status_code} - {resp.text.strip()}")
 
         if resp.status_code == 200:
@@ -96,21 +104,21 @@ def send_sms_provider2(mobile, token):
         logging.error(f"[Provider2] Error: {e}")
     return False
 
-def send_sms_provider3(mobile, token):
+def send_sms_provider3(mobile, token, config):
     """Send SMS via provider3."""
     payload = json.dumps({
-        "srcNum": PROV3_SRCNUM,
+        "srcNum": config.get("srcnum"),
         "recipient": mobile,
         "body": f"Your Token code is {token}"
-    }])
+    })
 
     headers = {
         "Content-Type": "application/json",
-        "x-api-key": PROV3_AUTH
+        "x-api-key": config.get("auth")
     }
 
     try:
-        resp = requests.post(PROV3_URL, headers=headers, data=payload, timeout=10)
+        resp = requests.post(config["url"], headers=headers, data=payload, timeout=10)
         logging.info(f"[Provider3] HTTP {resp.status_code} - {resp.text.strip()}")
 
         if resp.status_code == 200:
@@ -125,8 +133,30 @@ def send_sms_provider3(mobile, token):
     return False
 
 
+def send_sms(mobile, token, provider_name):
+    """Send SMS via the specified provider."""
+    if provider_name not in PROVIDERS:
+        logging.error(f"Provider {provider_name} not configured.")
+        return False
+
+    config = PROVIDERS[provider_name]
+    if provider_name == "provider1":
+        return send_sms_provider1(mobile, token, config)
+    elif provider_name == "provider2":
+        return send_sms_provider2(mobile, token, config)
+    elif provider_name == "provider3":
+        return send_sms_provider3(mobile, token, config)
+    else:
+        logging.error(f"Unknown provider: {provider_name}")
+        return False
+
+
 class SMTPHandler:
     async def handle_DATA(self, server, session, envelope):
+        # Reload config on each request to allow runtime changes
+        load_dotenv(override=True)
+        load_config()
+
         peer_ip = session.peer[0]
         if peer_ip != ALLOWED_IP:
             logging.warning(f"Rejected unauthorized IP: {peer_ip}")
@@ -139,16 +169,13 @@ class SMTPHandler:
 
         logging.info(f"Sending SMS to {phone} with code {code}")
 
-        # Try Provider1 first, fallback to Provider2
-        if send_sms_provider1(phone, code):
-            return '250 OK (Provider1)'
-        elif send_sms_provider2(phone, code):
-            return '250 OK (Provider2)'
-        elif send_sms_provider3(phone, code):
-            return '250 OK (Provider3)'
-        else:
-            logging.error("All SMS providers failed.")
-            return '451 Temporary failure'
+        # Try providers in priority order
+        for provider in PRIORITY_ORDER:
+            if send_sms(phone, code, provider):
+                return f'250 OK ({provider})'
+
+        logging.error("All SMS providers failed.")
+        return '451 Temporary failure'
 
 
 def run_server(host="0.0.0.0", port=25):

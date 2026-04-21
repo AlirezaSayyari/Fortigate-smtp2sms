@@ -8,5 +8,7 @@ services:
     restart: always
     ports:
       - "${HOST_SMTP_PORT:-25}:25"
-    # env_file:
-    #   - .env
+    volumes:
+      - ./.env:/app/.env
+    env_file:
+      - .env
