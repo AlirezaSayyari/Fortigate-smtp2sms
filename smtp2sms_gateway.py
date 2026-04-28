@@ -92,7 +92,7 @@ def send_sms_provider2(mobile, token, config):
     headers = {"Content-Type": "application/json"}
 
     try:
-        resp = requests.post(config["url"], headers=headers, data=payload, timeout=10)
+        resp = requests.post(config["url"], headers=headers, data=payload, timeout=20)
         logging.info(f"[Provider2] HTTP {resp.status_code} - {resp.text.strip()}")
 
         if resp.status_code == 200:
