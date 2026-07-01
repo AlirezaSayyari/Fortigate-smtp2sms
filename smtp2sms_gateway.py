@@ -7,6 +7,7 @@ import requests
 import json
 import os
 from dotenv import load_dotenv
+import time
 
 # Load environment variables
 load_dotenv()
@@ -27,6 +28,10 @@ def load_config():
                 "auth": os.getenv(f"PROVIDER{i}_AUTH"),
                 "body_id": os.getenv(f"PROVIDER{i}_BODY_ID"),
                 "srcnum": os.getenv(f"PROVIDER{i}_SRCNUM"),
+                "timeout": os.getenv(f"PROVIDER{i}_TIMEOUT"),
+                "connect_timeout": os.getenv(f"PROVIDER{i}_CONNECT_TIMEOUT"),
+                "read_timeout": os.getenv(f"PROVIDER{i}_READ_TIMEOUT"),
+                "retries": os.getenv(f"PROVIDER{i}_RETRIES"),
             }
 
     PRIORITY_ORDER = [p.strip() for p in os.getenv("PROVIDER_PRIORITY", "provider1,provider2,provider3").split(",")]
@@ -106,46 +111,89 @@ def send_sms_provider2(mobile, token, config):
 
 def send_sms_provider3(mobile, token, config):
     """Send SMS via provider3."""
-    payload = json.dumps({
+    payload_dict = {
         "from": config.get("srcnum"),
         "recipients": [mobile],
         "message": f"Your Token code is {token}",
         "type": 0
-    })
+    }
 
     headers = {
         "Content-Type": "application/json",
         "token": config.get("auth")
     }
 
-    try:
-        resp = requests.post(config["url"], headers=headers, data=payload, timeout=10)
-        logging.info(f"[Provider3] HTTP {resp.status_code} - {resp.text.strip()}")
+    url = config.get("url")
+    if not url:
+        logging.error("[Provider3] No URL configured for provider3")
+        return False
 
-        if resp.status_code == 200:
-            try:
-                data = resp.json()
-                logging.debug(f"[Provider3] Response JSON: {data}")
-            except Exception as e:
-                logging.error(f"[Provider3] JSON decode error: {e}")
-                return False
+    def config_int(key, default):
+        try:
+            value = config.get(key)
+            return int(value) if value not in (None, "") else default
+        except (TypeError, ValueError):
+            logging.warning(f"[Provider3] Invalid {key}={config.get(key)!r}; using {default}")
+            return default
 
-            # Expected successful shape:
-            # { "status": 200, "result": { "status": 0, "id": 5835656 } }
-            if isinstance(data, dict):
-                top_status = data.get("status")
-                result = data.get("result") or {}
-                result_status = result.get("status")
-                result_id = result.get("id", 0)
+    timeout = config_int("timeout", 20)
+    connect_timeout = config_int("connect_timeout", timeout)
+    read_timeout = config_int("read_timeout", timeout)
+    retries = config_int("retries", 2)
+    request_timeout = (connect_timeout, read_timeout)
 
-                if top_status == 200 and result_status == 0 and isinstance(result_id, int) and result_id > 0:
-                    logging.info("[Provider3] SMS sent successfully.")
-                    return True
-                else:
-                    logging.warning(f"[Provider3] Unexpected success payload: {data}")
+    for attempt in range(1, retries + 2):
+        try:
+            resp = requests.post(url, headers=headers, json=payload_dict, timeout=request_timeout)
+            logging.info(f"[Provider3] HTTP {resp.status_code} - {resp.text.strip()}")
+
+            if resp.status_code == 200:
+                try:
+                    data = resp.json()
+                    logging.debug(f"[Provider3] Response JSON: {data}")
+                except Exception as e:
+                    logging.error(f"[Provider3] JSON decode error: {e}")
                     return False
-    except Exception as e:
-        logging.error(f"[Provider3] Error: {e}")
+
+                # Expected successful shape:
+                # { "status": 200, "result": { "status": 0, "id": 5835656 } }
+                if isinstance(data, dict):
+                    top_status = data.get("status")
+                    result = data.get("result") or {}
+                    result_status = result.get("status")
+                    result_id = result.get("id", 0)
+
+                    if top_status == 200 and result_status == 0 and isinstance(result_id, int) and result_id > 0:
+                        logging.info("[Provider3] SMS sent successfully.")
+                        return True
+                    else:
+                        logging.warning(f"[Provider3] Unexpected success payload: {data}")
+                        return False
+                else:
+                    logging.warning(f"[Provider3] Unexpected non-dict response: {data}")
+                    return False
+
+            # For HTTP errors, don't retry on 4xx, retry on 5xx
+            if 400 <= resp.status_code < 500:
+                logging.error(f"[Provider3] Permanent HTTP error {resp.status_code}")
+                return False
+            else:
+                logging.warning(f"[Provider3] Transient HTTP error {resp.status_code}, attempt {attempt}/{retries + 1}")
+
+        except requests.exceptions.ConnectTimeout as e:
+            logging.warning(f"[Provider3] Connect timeout on attempt {attempt}/{retries + 1}: {e}")
+        except requests.exceptions.ReadTimeout as e:
+            logging.warning(f"[Provider3] Read timeout on attempt {attempt}/{retries + 1}: {e}")
+        except Exception as e:
+            logging.error(f"[Provider3] Error on attempt {attempt}/{retries + 1}: {e}")
+
+        # If we will retry, sleep with exponential backoff
+        if attempt <= retries:
+            backoff = min(30, 2 ** (attempt - 1))
+            logging.info(f"[Provider3] Retrying in {backoff}s (next attempt {attempt + 1}/{retries + 1})")
+            time.sleep(backoff)
+
+    logging.error("[Provider3] All attempts failed.")
     return False
 
 

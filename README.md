@@ -125,6 +125,20 @@ Edit `docker-compose.yml` and set:
 * Allowed SMTP Source IP (FortiGate IP)
 * Provider API Keys / URLs
 
+For Provider #3 timeout tuning, add these values to `.env` if the API is slow to connect:
+
+```env
+PROVIDER3_CONNECT_TIMEOUT=30
+PROVIDER3_READ_TIMEOUT=30
+PROVIDER3_RETRIES=2
+```
+
+After changing `smtp2sms_gateway.py`, rebuild the container:
+
+```bash
+docker compose up -d --build
+```
+
 ### 3️⃣ Run
 
 ```bash
