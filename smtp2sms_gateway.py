@@ -106,15 +106,16 @@ def send_sms_provider2(mobile, token, config):
 
 def send_sms_provider3(mobile, token, config):
     """Send SMS via provider3."""
-    payload = json.dumps([{
-        "srcNum": config.get("srcnum"),
-        "recipient": mobile,
-        "body": f"Your Token code is {token}"
-    }])
+    payload = json.dumps({
+        "from": config.get("srcnum"),
+        "recipients": [mobile],
+        "message": f"Your Token code is {token}",
+        "type": 0
+    })
 
     headers = {
         "Content-Type": "application/json",
-        "x-api-key": config.get("auth")
+        "token": config.get("auth")
     }
 
     try:
@@ -122,12 +123,27 @@ def send_sms_provider3(mobile, token, config):
         logging.info(f"[Provider3] HTTP {resp.status_code} - {resp.text.strip()}")
 
         if resp.status_code == 200:
-            data = resp.json()
-        if isinstance(data, list) and len(data) > 0:
-            item = data[0]
-            if item.get("statusCode") == 200 and item.get("messageId", 0) > 0:
-                logging.info("[Provider3] SMS sent successfully.")
-                return True
+            try:
+                data = resp.json()
+                logging.debug(f"[Provider3] Response JSON: {data}")
+            except Exception as e:
+                logging.error(f"[Provider3] JSON decode error: {e}")
+                return False
+
+            # Expected successful shape:
+            # { "status": 200, "result": { "status": 0, "id": 5835656 } }
+            if isinstance(data, dict):
+                top_status = data.get("status")
+                result = data.get("result") or {}
+                result_status = result.get("status")
+                result_id = result.get("id", 0)
+
+                if top_status == 200 and result_status == 0 and isinstance(result_id, int) and result_id > 0:
+                    logging.info("[Provider3] SMS sent successfully.")
+                    return True
+                else:
+                    logging.warning(f"[Provider3] Unexpected success payload: {data}")
+                    return False
     except Exception as e:
         logging.error(f"[Provider3] Error: {e}")
     return False
