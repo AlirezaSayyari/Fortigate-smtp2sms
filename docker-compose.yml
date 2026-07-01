@@ -3,14 +3,16 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        APP_FILE: smtp2sms_gateway_production.py
     image: smtp2sms:payamak
     container_name: smtp2sms
     restart: always
     ports:
       - "${HOST_SMTP_PORT:-25}:25"
     volumes:
-      - ./.env:/app/.env
+      - ./.env_production:/app/.env
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
     env_file:
-      - .env
+      - .env_production
