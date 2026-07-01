@@ -32,6 +32,8 @@ def load_config():
                 "connect_timeout": os.getenv(f"PROVIDER{i}_CONNECT_TIMEOUT"),
                 "read_timeout": os.getenv(f"PROVIDER{i}_READ_TIMEOUT"),
                 "retries": os.getenv(f"PROVIDER{i}_RETRIES"),
+                "min_timeout": os.getenv(f"PROVIDER{i}_MIN_TIMEOUT"),
+                "max_timeout": os.getenv(f"PROVIDER{i}_MAX_TIMEOUT"),
             }
 
     PRIORITY_ORDER = [p.strip() for p in os.getenv("PROVIDER_PRIORITY", "provider1,provider2,provider3").split(",")]
@@ -62,6 +64,56 @@ def extract_phone_and_code(envelope):
     return phone, code
 
 
+def config_int(config, key, default, provider_name):
+    """Read an integer provider config value."""
+    try:
+        value = config.get(key)
+        return int(value) if value not in (None, "") else default
+    except (TypeError, ValueError):
+        logging.warning(f"[{provider_name}] Invalid {key}={config.get(key)!r}; using {default}")
+        return default
+
+
+def clamp_timeout(value, config, key, provider_name):
+    """Keep provider timeouts inside the env-defined allowed range."""
+    min_timeout = config_int(config, "min_timeout", 1, provider_name)
+    max_timeout = config_int(config, "max_timeout", 30, provider_name)
+
+    if min_timeout < 1:
+        logging.warning(f"[{provider_name}] min_timeout must be >= 1; using 1")
+        min_timeout = 1
+
+    if max_timeout < min_timeout:
+        logging.warning(f"[{provider_name}] max_timeout is lower than min_timeout; using {min_timeout}")
+        max_timeout = min_timeout
+
+    if value < min_timeout:
+        logging.warning(f"[{provider_name}] {key}={value} below allowed range; using {min_timeout}")
+        return min_timeout
+
+    if value > max_timeout:
+        logging.warning(f"[{provider_name}] {key}={value} above allowed range; using {max_timeout}")
+        return max_timeout
+
+    return value
+
+
+def request_timeout(config, provider_name, default_connect=3, default_read=8):
+    """Build the requests timeout tuple from provider-specific env values."""
+    default_timeout = config_int(config, "timeout", 0, provider_name)
+    if default_timeout > 0:
+        default_connect = default_timeout
+        default_read = default_timeout
+
+    connect_timeout = config_int(config, "connect_timeout", default_connect, provider_name)
+    read_timeout = config_int(config, "read_timeout", default_read, provider_name)
+
+    connect_timeout = clamp_timeout(connect_timeout, config, "connect_timeout", provider_name)
+    read_timeout = clamp_timeout(read_timeout, config, "read_timeout", provider_name)
+
+    return (connect_timeout, read_timeout)
+
+
 def send_sms_provider1(mobile, token, config):
     """Send SMS via provider1."""
     payload = json.dumps({
@@ -76,7 +128,7 @@ def send_sms_provider1(mobile, token, config):
     }
 
     try:
-        resp = requests.post(config["url"], headers=headers, data=payload, timeout=10)
+        resp = requests.post(config["url"], headers=headers, data=payload, timeout=request_timeout(config, "Provider1"))
         logging.info(f"[Provider1] HTTP {resp.status_code} - {resp.text.strip()}")
         if resp.status_code == 200 and re.match(r"^\d+$", resp.text.strip()):
             logging.info("[Provider1] SMS sent successfully.")
@@ -97,7 +149,7 @@ def send_sms_provider2(mobile, token, config):
     headers = {"Content-Type": "application/json"}
 
     try:
-        resp = requests.post(config["url"], headers=headers, data=payload, timeout=20)
+        resp = requests.post(config["url"], headers=headers, data=payload, timeout=request_timeout(config, "Provider2"))
         logging.info(f"[Provider2] HTTP {resp.status_code} - {resp.text.strip()}")
 
         if resp.status_code == 200:
@@ -128,23 +180,15 @@ def send_sms_provider3(mobile, token, config):
         logging.error("[Provider3] No URL configured for provider3")
         return False
 
-    def config_int(key, default):
-        try:
-            value = config.get(key)
-            return int(value) if value not in (None, "") else default
-        except (TypeError, ValueError):
-            logging.warning(f"[Provider3] Invalid {key}={config.get(key)!r}; using {default}")
-            return default
-
-    timeout = config_int("timeout", 20)
-    connect_timeout = config_int("connect_timeout", timeout)
-    read_timeout = config_int("read_timeout", timeout)
-    retries = config_int("retries", 2)
-    request_timeout = (connect_timeout, read_timeout)
+    retries = config_int(config, "retries", 0, "Provider3")
+    if retries < 0:
+        logging.warning("[Provider3] retries must be >= 0; using 0")
+        retries = 0
+    timeout = request_timeout(config, "Provider3")
 
     for attempt in range(1, retries + 2):
         try:
-            resp = requests.post(url, headers=headers, json=payload_dict, timeout=request_timeout)
+            resp = requests.post(url, headers=headers, json=payload_dict, timeout=timeout)
             logging.info(f"[Provider3] HTTP {resp.status_code} - {resp.text.strip()}")
 
             if resp.status_code == 200:
